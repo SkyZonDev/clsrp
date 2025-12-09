@@ -114,7 +114,7 @@ fi
 
 # Lancer la vérification des types
 echo "📝 Vérification des types TypeScript..."
-pnpm type-check
+pnpm typecheck
 
 if [ $? -ne 0 ]; then
     echo "❌ Vérification des types échouée. Push annulé."
@@ -124,7 +124,7 @@ fi
 # Builder uniquement les workspaces modifiés
 echo "🏗️  Build des applications modifiées..."
 
-build_command="pnpm turbo build --filter="
+build_command="pnpm build --filter="
 
 for i in "${!workspaces[@]}"; do
     if [ $i -eq 0 ]; then
