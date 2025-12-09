@@ -1,0 +1,153 @@
+#!/bin/bash
+# .husky/pre-commit
+
+echo "🔍 Vérification pre-commit du monorepo CLSRP..."
+
+# Fonction pour récupérer les fichiers staged
+get_staged_files() {
+    git diff --cached --name-only
+}
+
+# Fonction pour vérifier si des fichiers de code ont été modifiés
+check_source_files_changed() {
+    local staged_files=$(get_staged_files)
+    echo "$staged_files" | grep -E '\.(ts|tsx|js|jsx|json|jsonc)$' > /dev/null
+    return $?
+}
+
+# Fonction pour vérifier si seulement des fichiers non-critiques ont été modifiés
+check_only_non_critical_files() {
+    local staged_files=$(get_staged_files)
+
+    local total_files=$(printf '%s\n' "$staged_files" | sed '/^$/d' | wc -l)
+    local non_critical=$(printf '%s\n' "$staged_files" | grep -E -c '(^README\.md$|^LICENSE$|^\.gitignore$|^\.husky/|^\.vscode/|^\.github/|.*\.md$|^\.env\.example$)')
+
+    if [ "$total_files" -eq "$non_critical" ] && [ "$total_files" -gt 0 ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Retourne la liste des apps existantes parmi web/api/bot
+get_existing_apps() {
+    local existing=()
+    for name in web api bot; do
+        if [ -d "apps/$name" ]; then
+            existing+=("$name")
+        fi
+    done
+    echo "${existing[@]}"
+}
+
+# Fonction pour détecter quels workspaces ont été modifiés (et existent)
+detect_changed_workspaces() {
+    local staged_files=$(get_staged_files)
+    local potential=()
+
+    # Vérifier apps/web
+    if echo "$staged_files" | grep -q "^apps/web/"; then
+        potential+=("web")
+    fi
+
+    # Vérifier apps/api
+    if echo "$staged_files" | grep -q "^apps/api/"; then
+        potential+=("api")
+    fi
+
+    # Vérifier apps/bot
+    if echo "$staged_files" | grep -q "^apps/bot/"; then
+        potential+=("bot")
+    fi
+
+    # Vérifier packages partagés (affectent potentiellement toutes les apps)
+    if echo "$staged_files" | grep -q "^packages/"; then
+        potential=("web" "api" "bot")
+    fi
+
+    # Vérifier fichiers de configuration racine
+    if echo "$staged_files" | grep -E '^(turbo\.json|pnpm-workspace\.yaml|tsconfig\.json|biome\.json)' > /dev/null; then
+        potential=("web" "api" "bot")
+    fi
+
+    # Filtrer pour ne garder que les apps existantes (évite de lancer des checks sur des workspaces supprimés)
+    local existing_apps=()
+    local declared
+    declared=($(get_existing_apps))
+    if [ "${#potential[@]}" -eq 0 ]; then
+        echo "${existing_apps[@]}"
+        return
+    fi
+
+    for p in "${potential[@]}"; do
+        for e in "${declared[@]}"; do
+            if [ "$p" = "$e" ]; then
+                # éviter doublons
+                if ! printf '%s\n' "${existing_apps[@]}" | grep -Fxq "$p"; then
+                    existing_apps+=("$p")
+                fi
+            fi
+        done
+    done
+
+    echo "${existing_apps[@]}"
+}
+
+# Vérifier si seulement des fichiers non-critiques
+if check_only_non_critical_files; then
+    echo "ℹ️  Seuls des fichiers non-critiques modifiés. Pre-commit ignoré."
+    echo "✅ Pre-commit validé !"
+    exit 0
+fi
+
+# Vérifier si des fichiers de code ont été modifiés
+if ! check_source_files_changed; then
+    echo "ℹ️  Aucun fichier de code modifié. Pre-commit ignoré."
+    echo "✅ Pre-commit validé !"
+    exit 0
+fi
+
+# Lancer lint-staged (formatage et linting automatique avec Biome)
+echo "🎨 Formatage et linting automatique avec Biome..."
+pnpm exec lint-staged
+
+if [ $? -ne 0 ]; then
+    echo "❌ Biome check échoué. Commit annulé."
+    echo "💡 Astuce: Exécutez 'pnpm biome check --write .' pour corriger automatiquement."
+    exit 1
+fi
+
+# Détecter les workspaces modifiés pour la vérification des types
+workspaces=($(detect_changed_workspaces))
+
+# Si aucun workspace affecté, sortir
+if [ ${#workspaces[@]} -eq 0 ]; then
+    echo "✅ Pre-commit validé !"
+    exit 0
+fi
+
+echo "📁 Workspaces modifiés: ${workspaces[*]}"
+
+# Vérification des types TypeScript
+typecheck_command="pnpm typecheck --filter="
+
+for i in "${!workspaces[@]}"; do
+    if [ "$i" -eq 0 ]; then
+        typecheck_command+="${workspaces[$i]}"
+    else
+        typecheck_command+=" --filter=${workspaces[$i]}"
+    fi
+done
+
+echo "📝 Vérification des types TypeScript..."
+echo "  💻 Commande: $typecheck_command"
+
+eval "$typecheck_command"
+
+if [ $? -ne 0 ]; then
+    echo "❌ Erreurs TypeScript détectées. Commit annulé."
+    echo "💡 Astuce: Exécutez 'pnpm type-check' pour voir tous les problèmes."
+    exit 1
+fi
+
+echo "✅ Pre-commit validé pour les workspaces: ${workspaces[*]}"
+echo "🎉 Tous les checks sont passés, commit autorisé !"

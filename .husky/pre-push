@@ -1,0 +1,150 @@
+#!/bin/bash
+# .husky/pre-push
+
+echo "🚀 Vérification pre-push du monorepo CLSRP..."
+
+# Fonction pour récupérer les fichiers modifiés
+get_changed_files() {
+    git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only --cached
+}
+
+# Fonction pour vérifier si des fichiers de code ont été modifiés
+check_source_files_changed() {
+    local changed_files=$(get_changed_files)
+    echo "$changed_files" | grep -E '\.(ts|tsx|js|jsx|json|css|scss|sass|md|sql)$' > /dev/null
+    return $?
+}
+
+# Fonction pour détecter quels workspaces ont été modifiés
+detect_changed_workspaces() {
+    local changed_files=$(get_changed_files)
+    local workspaces=()
+
+    if echo "$changed_files" | grep -q "^apps/web/"; then
+        workspaces+=("web")
+    fi
+
+    if echo "$changed_files" | grep -q "^apps/api/"; then
+        workspaces+=("api")
+    fi
+
+    if echo "$changed_files" | grep -q "^apps/bot/"; then
+        workspaces+=("bot")
+    fi
+
+    if echo "$changed_files" | grep -q "^packages/"; then
+        workspaces=("web" "api" "bot")
+    fi
+
+    if echo "$changed_files" | grep -E '^(turbo\.json|pnpm-workspace\.yaml|tsconfig\.json|biome\.json)' > /dev/null; then
+        workspaces=("web" "api" "bot")
+    fi
+
+    echo "${workspaces[@]}"
+}
+
+# Fonction pour vérifier si seulement des fichiers non-critiques ont été modifiés
+check_only_docs_or_config() {
+    local changed_files=$(get_changed_files)
+
+    local total_files=$(echo "$changed_files" | wc -l)
+    local non_critical=$(echo "$changed_files" | grep -E '^(README\.md|LICENSE|\.gitignore|\.husky/)' | wc -l)
+
+    if [ "$total_files" -eq "$non_critical" ] && [ "$total_files" -gt 0 ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Fonction pour nettoyer les builds
+clean_builds() {
+    echo "🧹 Nettoyage des dossiers de build..."
+
+    local dirs_to_clean=(
+        "apps/web/.next"
+        "apps/web/dist"
+        "apps/api/dist"
+        "apps/bot/dist"
+        "packages/ui/dist"
+        ".turbo"
+    )
+
+    for dir in "${dirs_to_clean[@]}"; do
+        if [ -d "$dir" ]; then
+            echo "  🗑️  Suppression de $dir"
+            rm -rf "$dir"
+        fi
+    done
+}
+
+# Vérifier si seulement des fichiers non-critiques ont été modifiés
+if check_only_docs_or_config; then
+    echo "ℹ️  Seuls des fichiers non-critiques (README, etc.) modifiés. Build ignorée."
+    echo "✅ Pre-push validé !"
+    exit 0
+fi
+
+# Vérifier si des fichiers de code ont été modifiés
+if ! check_source_files_changed; then
+    echo "ℹ️  Aucun fichier de code modifié. Build ignorée."
+    echo "✅ Pre-push validé !"
+    exit 0
+fi
+
+# Détecter les workspaces modifiés
+workspaces=($(detect_changed_workspaces))
+
+if [ ${#workspaces[@]} -eq 0 ]; then
+    echo "ℹ️  Aucun workspace affecté. Build ignorée."
+    echo "✅ Pre-push validé !"
+    exit 0
+fi
+
+echo "📁 Workspaces modifiés détectés: ${workspaces[*]}"
+
+# Lancer Biome check sur tout le projet
+echo "🔍 Vérification du code avec Biome..."
+pnpm biome check .
+
+if [ $? -ne 0 ]; then
+    echo "❌ Biome check échoué. Push annulé."
+    echo "💡 Astuce: Exécutez 'pnpm biome check --write .' pour corriger automatiquement."
+    exit 1
+fi
+
+# Lancer la vérification des types
+echo "📝 Vérification des types TypeScript..."
+pnpm type-check
+
+if [ $? -ne 0 ]; then
+    echo "❌ Vérification des types échouée. Push annulé."
+    exit 1
+fi
+
+# Builder uniquement les workspaces modifiés
+echo "🏗️  Build des applications modifiées..."
+
+build_command="pnpm turbo build --filter="
+
+for i in "${!workspaces[@]}"; do
+    if [ $i -eq 0 ]; then
+        build_command+="${workspaces[$i]}"
+    else
+        build_command+=" --filter=${workspaces[$i]}"
+    fi
+done
+
+echo "  💻 Commande: $build_command"
+
+eval $build_command
+
+if [ $? -ne 0 ]; then
+    clean_builds
+    echo "❌ Build échouée. Push annulé."
+    exit 1
+fi
+
+clean_builds
+
+echo "✅ Pre-push validé pour les workspaces: ${workspaces[*]}"
+echo "🎉 Tous les checks sont passés, push autorisé !"

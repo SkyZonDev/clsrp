@@ -19,6 +19,11 @@
             "dependsOn": ["^typecheck"],
             "cache": false,
             "outputs": []
+        },
+        "clean": {
+            "dependsOn": ["^clean"],
+            "cache": false,
+            "outputs": []
         }
     }
 }
