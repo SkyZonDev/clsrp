@@ -141,4 +141,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 # turbo
-.turbo
+.turbo/
+
+# IntelliJ
+.idea/

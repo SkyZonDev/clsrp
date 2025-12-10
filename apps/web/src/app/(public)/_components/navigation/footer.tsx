@@ -112,7 +112,7 @@ export function Footer() {
                         <div className="flex gap-3">
                             <Link
                                 href={
-                                    process.env.DISCORD_URL ||
+                                    process.env.NEXT_PUBLIC_DISCORD_URL ||
                                     'https://discord.gg'
                                 }
                                 target="_blank"
@@ -124,7 +124,7 @@ export function Footer() {
                             </Link>
                             <Link
                                 href={
-                                    process.env.INSTAGRAM_URL ||
+                                    process.env.NEXT_PUBLIC_INSTAGRAM_URL ||
                                     'https://instagram.com'
                                 }
                                 target="_blank"
@@ -136,7 +136,7 @@ export function Footer() {
                             </Link>
                             <Link
                                 href={
-                                    process.env.TIKTOK_URL ||
+                                    process.env.NEXT_PUBLIC_TIKTOK_URL ||
                                     'https://tiktok.com'
                                 }
                                 target="_blank"
